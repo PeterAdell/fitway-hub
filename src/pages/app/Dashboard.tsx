@@ -224,12 +224,12 @@ export default function Dashboard() {
             <h2 className="text-lg font-bold text-white mb-4">{t('quick_tools')}</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
              {[
-               { name: t('tool_bmi_calc'), icon: Activity, color: "bg-blue-500/20 text-blue-300" },
-               { name: t('tool_macros'), icon: Flame, color: "bg-rose-500/20 text-rose-300" },
-               { name: t('tool_steps'), icon: Footprints, color: "bg-emerald-500/20 text-emerald-300" },
-               { name: t('tool_water'), icon: Droplets, color: "bg-cyan-500/20 text-cyan-300" },
+               { name: t('tool_bmi_calc'), icon: Activity, color: "bg-blue-500/20 text-blue-300", to: "/app/tools" },
+               { name: t('tool_macros'), icon: Flame, color: "bg-rose-500/20 text-rose-300", to: "/app/tools" },
+               { name: t('tool_steps'), icon: Footprints, color: "bg-emerald-500/20 text-emerald-300", to: "/app/steps" },
+               { name: t('tool_water'), icon: Droplets, color: "bg-cyan-500/20 text-cyan-300", to: "/app/tools" },
              ].map((tool, i) => (
-               <Link to="/app/tools" key={i} className="backdrop-blur-md bg-white/10 p-4 rounded-xl border border-white/20 hover:border-white/40 transition-all text-left group">
+               <Link to={tool.to} key={i} className="backdrop-blur-md bg-white/10 p-4 rounded-xl border border-white/20 hover:border-white/40 transition-all text-left group">
                  <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center mb-3", tool.color)}>
                    <tool.icon className="w-5 h-5" />
                  </div>
