@@ -37,13 +37,13 @@ const URL = process.argv[2] || 'http://localhost:3000/app/steps';
     console.log('Navigating to', URL);
     await page.goto(URL, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // Click the Live Tracking (Premium) tab/button
-    const [premiumBtn] = await page.$x("//button[contains(., 'Live Tracking (Premium)')]");
-    if (!premiumBtn) {
-      console.error('Could not find Live Tracking (Premium) button');
+    // Click the Live Tracking tab/button
+    const [liveBtn] = await page.$x("//button[contains(., 'Live Tracking')]");
+    if (!liveBtn) {
+      console.error('Could not find Live Tracking button');
     } else {
-      await premiumBtn.click();
-      console.log('Clicked Live Tracking (Premium)');
+      await liveBtn.click();
+      console.log('Clicked Live Tracking');
     }
 
     // Wait for MapTracker container (map div)
@@ -52,13 +52,13 @@ const URL = process.argv[2] || 'http://localhost:3000/app/steps';
     // Wait briefly for leaflet to load (watch console for its logs)
     await page.waitForTimeout(2000);
 
-    // Click 'Start Live Tracking (Premium)'
-    const [startBtn] = await page.$x("//button[contains(., 'Start Live Tracking (Premium)')]");
+    // Click 'Start Live Tracking'
+    const [startBtn] = await page.$x("//button[contains(., 'Start Live Tracking')]");
     if (!startBtn) {
-      console.error('Start Live Tracking (Premium) button not found');
+      console.error('Start Live Tracking button not found');
     } else {
       await startBtn.click();
-      console.log('Clicked Start Live Tracking (Premium)');
+      console.log('Clicked Start Live Tracking');
     }
 
     // After starting, simulate movement by updating geolocation several times

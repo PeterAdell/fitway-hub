@@ -1,0 +1,30 @@
+<!-- 
+  AndroidManifest.xml Updates for Step Tracking
+
+  ADD THESE PERMISSIONS to your existing AndroidManifest.xml (inside <manifest> tag, before <application>):
+  
+  EXPLANATION:
+  - ACTIVITY_RECOGNITION: Required to access the step counter sensor on Android 10+ (runtime permission needed)
+  - BODY_SENSORS: Low-level sensor access (paired with ACTIVITY_RECOGNITION for step counter)
+  - ACCESS_FINE_LOCATION: High-precision GPS for route tracking
+  - ACCESS_COARSE_LOCATION: Network-based location (fallback)
+  - FOREGROUND_SERVICE: Permission to run a foreground service with persistent notification (Android 8+)
+-->
+
+<!-- Add these inside <manifest> before <application> tag -->
+<uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+<uses-permission android:name="android.permission.BODY_SENSORS" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.INTERNET" /> <!-- For map tiles (optional) -->
+
+<!-- Add this inside <application> tag to declare the foreground service -->
+<service
+  android:name=".steps.StepCounterService"
+  android:enabled="true"
+  android:exported="false"
+  android:foregroundServiceType="location" />
+
+<!-- If using autolinking (RN 0.60+), no need to manually register StepCounterPackage -->
+<!-- Otherwise, manually add to MainApplication.getPackages() -->

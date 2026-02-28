@@ -1,6 +1,9 @@
 /**
  * Step Calculation Logic
- * Formula: steps = 100,000 / (height × Gender_constant × Weight_Adjustment)
+ * Formula: 
+ *   Step Length = 0.415 × (height in cm) / 100
+ *   Steps = distance (meters) / step length
+ *   Calories = steps × weight × height-based factor
  */
 
 export interface UserMetrics {
@@ -9,27 +12,26 @@ export interface UserMetrics {
   gender: 'male' | 'female' | 'other';
 }
 
-// Gender constants based on stride length studies
-const GENDER_CONSTANTS: Record<string, number> = {
-  male: 0.43,
-  female: 0.41,
-  other: 0.42
-};
+/**
+ * Calculate step length based on height
+ * Step Length = 0.415 × height (in cm) / 100
+ * @param heightCm - Height in centimeters
+ * @returns Step length in meters
+ */
+export function calculateStepLength(heightCm: number): number {
+  return (0.415 * heightCm) / 100;
+}
 
-// Calculate BMI and get weight adjustment
-export function getWeightAdjustment(weight: number, height: number): number {
-  const heightInMeters = height / 100;
-  const bmi = weight / (heightInMeters * heightInMeters);
-  
-  // Weight adjustment reduces step length for higher BMI
-  // Normal BMI (18.5-24.9) = 1.0
-  // Overweight (25-29.9) = 0.95
-  // Obese (30+) = 0.90
-  
-  if (bmi < 18.5) return 1.05; // Underweight - longer stride
-  if (bmi <= 24.9) return 1.0;  // Normal weight
-  if (bmi <= 29.9) return 0.95; // Overweight - slightly shorter stride
-  return 0.90; // Obese - shorter stride
+/**
+ * Calculate height-based calorie factor
+ * Taller people burn more calories per step
+ * @param heightCm - Height in centimeters
+ * @returns Calorie factor (calories per step per kg)
+ */
+export function getHeightBasedCalorieFactor(heightCm: number): number {
+  // Factor increases with height: roughly 0.00004-0.00005 per step per kg per cm
+  // Normalize around 170cm (average adult height)
+  return 0.00004 + (heightCm - 170) * 0.000001;
 }
 
 /**
@@ -43,14 +45,11 @@ export function calculateStepsFromDistance(
   userMetrics: UserMetrics
 ): number {
   const distanceMeters = distanceKm * 1000;
-  const genderConstant = GENDER_CONSTANTS[userMetrics.gender] || 0.42;
-  const weightAdjustment = getWeightAdjustment(userMetrics.weight, userMetrics.height);
+  const stepLength = calculateStepLength(userMetrics.height);
   
-  // Formula: steps = 100,000 / (height × Gender_constant × Weight_Adjustment)
-  // This gives steps per kilometer
-  const stepsPerKm = 100000 / (userMetrics.height * genderConstant * weightAdjustment);
+  if (stepLength <= 0) return 0;
   
-  return Math.round(stepsPerKm * distanceKm);
+  return Math.round(distanceMeters / stepLength);
 }
 
 /**
@@ -63,33 +62,38 @@ export function calculateDistanceFromSteps(
   steps: number,
   userMetrics: UserMetrics
 ): number {
-  const genderConstant = GENDER_CONSTANTS[userMetrics.gender] || 0.42;
-  const weightAdjustment = getWeightAdjustment(userMetrics.weight, userMetrics.height);
+  const stepLength = calculateStepLength(userMetrics.height);
   
-  const stepsPerKm = 100000 / (userMetrics.height * genderConstant * weightAdjustment);
+  if (stepLength <= 0 || steps <= 0) return 0;
   
-  return parseFloat((steps / stepsPerKm).toFixed(2));
+  const distanceMeters = steps * stepLength;
+  return parseFloat((distanceMeters / 1000).toFixed(2));
 }
 
 /**
- * Estimate calories burned from steps
- * Formula: calories = (weight × distance × 0.57) for average person
- * Adjusted for pace and intensity
+ * Estimate calories burned from steps and weight
+ * Formula: Calories = steps × base_rate × (weight / 70) × height_adjustment
+ * Standard: ~0.05 calories per step for 70kg person at average height
+ * @param steps - Number of steps
+ * @param weightKg - Weight in kilograms
+ * @param heightCm - Height in centimeters
+ * @returns Estimated calories burned
  */
 export function estimateCaloriesBurned(
-  distanceKm: number,
-  weight: number,
-  intensity: 'slow' | 'moderate' | 'fast' = 'moderate'
+  steps: number,
+  weightKg: number,
+  heightCm: number
 ): number {
-  const baseCalories = weight * distanceKm * 0.57;
+  // Standard: average person (70kg) burns ~0.05 cal per step when walking
+  const baseCaloriesPerStep = 0.05;
   
-  const intensityMultipliers: Record<string, number> = {
-    slow: 0.8,      // 3 km/h
-    moderate: 1.0,  // 5 km/h
-    fast: 1.3       // 6.5+ km/h
-  };
+  // Adjust for actual weight (heavier person burns more)
+  const weightAdjustment = weightKg / 70;
   
-  return Math.round(baseCalories * intensityMultipliers[intensity]);
+  // Slight adjustment for height (taller person has longer stride = more work)
+  const heightAdjustment = 1 + (heightCm - 170) * 0.001;
+  
+  return Math.round(steps * baseCaloriesPerStep * weightAdjustment * heightAdjustment);
 }
 
 /**
@@ -158,6 +162,9 @@ export function calculateCaloriesMET(params: {
 
   if (durationMinutes && durationMinutes > 0) {
     calories = Math.round((durationMinutes * (usedMet * 3.5 * weightKg)) / 200);
+  } else if (steps && heightCm) {
+    // Use the physics-based formula: calories = steps × weight × height-based factor
+    calories = estimateCaloriesBurned(steps, weightKg, heightCm);
   } else if (steps) {
     // Fallback simplified estimate scaled by weight (0.04 * steps for 70kg baseline)
     calories = Math.round(0.04 * steps * (weightKg / 70));

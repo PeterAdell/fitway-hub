@@ -28,17 +28,35 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(localStorage.getItem("token"));
-
-  // Load user from local storage or fetch profile on mount
-  useEffect(() => {
-    // Support legacy keys from earlier runs (fitway_user / fitway_token)
+  // Initialize from localStorage synchronously to avoid race conditions on refresh
+  const getInitialState = () => {
     const storedUser = localStorage.getItem("user") || localStorage.getItem("fitway_user");
     const storedToken = localStorage.getItem("token") || localStorage.getItem("fitway_token");
+    const rememberMe = localStorage.getItem('remember_me') === 'true';
 
+    if (storedUser && storedToken && rememberMe) {
+      try {
+        return {
+          user: JSON.parse(storedUser),
+          token: storedToken
+        };
+      } catch (e) {
+        return { user: null, token: null };
+      }
+    }
+    return { user: null, token: null };
+  };
+
+  const initialState = getInitialState();
+  const [user, setUser] = useState<User | null>(initialState.user);
+  const [token, setToken] = useState<string | null>(initialState.token);
+
+  // Normalize legacy keys on mount
+  useEffect(() => {
+    const storedUser = localStorage.getItem("user") || localStorage.getItem("fitway_user");
+    const storedToken = localStorage.getItem("token") || localStorage.getItem("fitway_token");
+    
     if (storedUser && storedToken) {
-      // Normalize keys to new names
       try {
         localStorage.setItem('user', storedUser);
         localStorage.setItem('token', storedToken);
@@ -47,9 +65,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (e) {
         // ignore storage errors
       }
-
-      setUser(JSON.parse(storedUser));
-      setToken(storedToken);
     }
   }, []);
 
@@ -84,6 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(userData);
       localStorage.setItem("token", data.token);
       localStorage.setItem("user", JSON.stringify(userData));
+      localStorage.setItem('remember_me', rememberMe ? 'true' : 'false');
 
       if (data.rememberToken) {
         localStorage.setItem('remember_token', data.rememberToken);
@@ -139,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     localStorage.removeItem('remember_token');
+    localStorage.removeItem('remember_me');
   };
 
   const updateUser = (data: Partial<User>) => {

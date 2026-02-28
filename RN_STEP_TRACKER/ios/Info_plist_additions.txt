@@ -1,0 +1,46 @@
+<!-- 
+  Info.plist Updates for iOS Step Tracking
+
+  ADD THESE KEYS to your ios/{YourApp}/Info.plist:
+  
+  EXPLANATION:
+  - NSMotionUsageDescription: Required to access motion/pedometer data (iOS 8+, displayed to user)
+  - NSLocationWhenInUseUsageDescription: Required for GPS tracking while app is active
+  - NSLocationAlwaysAndWhenInUseUsageDescription: For background location (optional, more permissions)
+  - NSLocationUsageDescription: Generic location usage (iOS 11+)
+-->
+
+<!-- Add these dictionary entries to your Info.plist -->
+
+<!-- Required: Motion/Pedometer permission description -->
+<key>NSMotionUsageDescription</key>
+<string>We use your device's motion sensors to accurately count your steps and track physical activity.</string>
+
+<!-- Required: Location permission description (foreground) -->
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>We use your location to map your running/walking route and show distance traveled.</string>
+
+<!-- Optional: For background location tracking (requires additional user approval) -->
+<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+<string>We track your location in the background to continue recording your route when the app is not actively displayed.</string>
+
+<!-- 
+  Optional: Background Modes (in UIBackgroundModes array)
+  
+  Note: Using background location mode ("location") requires explicit user approval and shows 
+  a blue pill notification ("Location in Use") when app is backgrounded.
+  
+  Alternative: Don't request background location. Instead, rely on:
+  - CMPedometer queryPedometerData() on app resume to fetch historical steps
+  - Minimal location sampling when app is active
+  
+  For a free, offline-first app, we recommend the second approach to respect user battery.
+-->
+
+<!-- If you want background location, add this (not recommended for basic offline tracking): -->
+<!-- 
+<key>UIBackgroundModes</key>
+<array>
+  <string>location</string>
+</array>
+-->

@@ -4,8 +4,10 @@ import { useI18n } from '@/context/I18nContext';
 import { useAuth } from '@/context/AuthContext';
 import axios from 'axios';
 import { calculateStepsFromDistance, calculateDistanceFromSteps, estimateCaloriesBurned, calculateCaloriesMET, UserMetrics } from '@/lib/stepCalculations';
-import { startLocationTracking, stopLocationTracking, LocationTrackingState, createTrackingSession, isGeolocationSupported } from '@/lib/locationTracking';
-// Google Fit removed — using device geolocation + OpenStreetMap for live tracking
+// old location-tracking helpers are no longer required; MapTracker
+// now performs geolocation, distance/step estimation, and polyline
+// rendering. we keep the import commented out for reference.
+// // Google Fit removed — using device geolocation + OpenStreetMap for live tracking
 import MapTracker from '@/components/app/MapTracker';
 
 interface StepsEntry {
@@ -32,7 +34,7 @@ export default function Steps() {
   const { user } = useAuth();
   const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<'today' | 'weekly' | 'monthly'>('today');
-  const [trackingMode, setTrackingMode] = useState<'manual' | 'live' | 'live-premium'>('manual');
+  const [trackingMode, setTrackingMode] = useState<'manual' | 'live'>('manual');
   const [entries, setEntries] = useState<StepsEntry[]>([]);
   const [weeklyStats, setWeeklyStats] = useState<WeeklyStats | null>(null);
   const [monthlyStats, setMonthlyStats] = useState<WeeklyStats | null>(null);
@@ -42,8 +44,7 @@ export default function Steps() {
   const [steps, setSteps] = useState('');
   const [distanceKm, setDistanceKm] = useState('');
   
-  // Live tracking mode (device geolocation)
-  const [isTracking, setIsTracking] = useState(false);
+  // Live tracking values (updated via MapTracker's onUpdate)
   const [autoDistance, setAutoDistance] = useState(0);
   const [autoSteps, setAutoSteps] = useState(0);
   const [autoSpeed, setAutoSpeed] = useState<number | null>(null);
@@ -55,6 +56,30 @@ export default function Steps() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   
+  // Distance unit preference
+  const [distanceUnit, setDistanceUnit] = useState<'km' | 'm' | 'cm'>(() => {
+    const saved = localStorage.getItem('fithub_distance_unit');
+    return (saved as 'km' | 'm' | 'cm') || 'km';
+  });
+
+  // Convert internal distance (meters) to display value based on selected unit
+  const getDisplayDistance = (distanceMeters: number): { value: number; unit: string } => {
+    switch (distanceUnit) {
+      case 'm':
+        return { value: distanceMeters, unit: 'm' };
+      case 'cm':
+        return { value: Math.round(distanceMeters * 100), unit: 'cm' };
+      case 'km':
+      default:
+        return { value: distanceMeters / 1000, unit: 'km' };
+    }
+  };
+
+  const handleDistanceUnitChange = (unit: 'km' | 'm' | 'cm') => {
+    setDistanceUnit(unit);
+    localStorage.setItem('fithub_distance_unit', unit);
+  };
+
   // Offline tracking
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [offlineCount, setOfflineCount] = useState(0);
@@ -162,12 +187,8 @@ export default function Steps() {
     }
   };
 
-  // Real location tracking state
-  const [trackingError, setTrackingError] = useState('');
-  const trackingStateRef = useRef<LocationTrackingState | null>(null);
-  const durationIntervalRef = useRef<any>(null);
-  const lastDistRef = useRef<number>(0);
-  const meterAccumulatorRef = useRef<number>(0);
+  // tracker state – values updated via MapTracker onUpdate callback
+  const mapTrackerRef = useRef<any>(null);
   const [countMode, setCountMode] = useState<'perMeter' | 'stride'>(() => (localStorage.getItem('fithub_count_mode') as 'perMeter' | 'stride') || 'perMeter');
 
   // Helper: provide user metrics or sensible defaults for live estimation
@@ -179,128 +200,13 @@ export default function Steps() {
     };
   };
 
-  const startRealTracking = async () => {
-    try {
-      setTrackingError('');
-      
-      if (!isGeolocationSupported()) {
-        setTrackingError(t('geolocation_not_supported'));
-        return;
-      }
-
-      const trackingState = await startLocationTracking();
-      trackingStateRef.current = trackingState;
-      setIsTracking(true);
-      setAutoDistance(0);
-      setTrackedDuration(0);
-
-      // Update UI every second and increment steps per-meter (1m => 1 step) or stride-based
-      lastDistRef.current = trackingState.distance || 0;
-      meterAccumulatorRef.current = 0;
-      setAutoSteps(0);
-      const interval = setInterval(() => {
-        if (trackingStateRef.current) {
-          const dist = trackingStateRef.current.distance; // in km
-          const dur = trackingStateRef.current.totalDuration;
-          setAutoDistance(dist);
-          setTrackedDuration(dur);
-
-          // compute delta in meters since last tick
-          const deltaMeters = Math.max(0, (dist - (lastDistRef.current || 0)) * 1000);
-          lastDistRef.current = dist;
-          if (deltaMeters > 0) {
-            const userMetrics = getUserMetricsOrDefaults();
-            if (countMode === 'perMeter') {
-              meterAccumulatorRef.current += deltaMeters;
-              const stepsToAdd = Math.floor(meterAccumulatorRef.current);
-              if (stepsToAdd > 0) {
-                setAutoSteps((prev) => prev + stepsToAdd);
-                setSteps((prev) => {
-                  const prevNum = parseInt(prev || '0') || 0;
-                  return (prevNum + stepsToAdd).toString();
-                });
-                meterAccumulatorRef.current -= stepsToAdd;
-              }
-            } else {
-              // stride-based: convert delta meters to km and estimate steps
-              const deltaKm = deltaMeters / 1000;
-              const incrementalSteps = calculateStepsFromDistance(deltaKm, userMetrics);
-              if (incrementalSteps > 0) {
-                setAutoSteps((prev) => prev + incrementalSteps);
-                setSteps((prev) => {
-                  const prevNum = parseInt(prev || '0') || 0;
-                  return (prevNum + incrementalSteps).toString();
-                });
-              }
-            }
-          }
-
-          // Update calories estimate from total distance
-          const userMetrics = getUserMetricsOrDefaults();
-          const metLive = calculateCaloriesMET({ weightKg: userMetrics.weight, heightCm: userMetrics.height, distanceKm: dist, gender: userMetrics.gender });
-          setCalories(metLive.calories.toString());
-        }
-      }, 1000);
-      durationIntervalRef.current = interval;
-    } catch (error: any) {
-      setTrackingError(error.message || t('failed_start_tracking'));
-      setIsTracking(false);
-    }
-  };
-
-  const stopRealTracking = () => {
-    if (durationIntervalRef.current) {
-      clearInterval(durationIntervalRef.current);
-    }
-
-    if (trackingStateRef.current) {
-      const finalState = stopLocationTracking(trackingStateRef.current);
-      setIsTracking(false);
-      
-      // Calculate steps from tracked distance according to selected mode
-      if (finalState.distance > 0) {
-        if (countMode === 'perMeter') {
-          const finalMeters = Math.floor(finalState.distance * 1000);
-          setAutoSteps(finalMeters);
-          setDistanceKm(finalState.distance.toFixed(3));
-          setSteps(finalMeters.toString());
-        } else {
-          const userMetrics = getUserMetricsOrDefaults();
-          const calculatedSteps = calculateStepsFromDistance(finalState.distance, userMetrics);
-          setAutoSteps(calculatedSteps);
-          setDistanceKm(finalState.distance.toFixed(3));
-          setSteps(calculatedSteps.toString());
-        }
-        const metFinal = calculateCaloriesMET({ weightKg: getUserMetricsOrDefaults().weight, heightCm: getUserMetricsOrDefaults().height, distanceKm: finalState.distance, gender: getUserMetricsOrDefaults().gender });
-        setCalories(metFinal.calories.toString());
-      }
-      // reset accumulators
-      lastDistRef.current = 0;
-      meterAccumulatorRef.current = 0;
-      
-      trackingStateRef.current = null;
-    }
-  };
-
-  // Live tracking (geolocation-based)
-  const startLiveTracking = async () => {
-    try {
-      setTrackingError('');
-      await startRealTracking();
-    } catch (err: any) {
-      console.error('startLiveTracking error', err);
-      setMessage(err?.message || 'Failed to start live tracking');
-    }
-  };
-
-  const stopLiveTracking = () => {
-    try {
-      stopRealTracking();
-      setMessage('Stopped live tracking');
-      setTimeout(() => setMessage(''), 2000);
-    } catch (err) {
-      console.error('stopLiveTracking error', err);
-    }
+  // live tracking updates come via MapTracker's onUpdate callback
+  const handleMapUpdate = (data: { distanceMeters: number; steps: number; calories: number; speedKmh?: number; met?: number }) => {
+    setAutoDistance(data.distanceMeters);
+    setAutoSteps(data.steps);
+    setCalories(data.calories.toString());
+    setAutoSpeed(typeof data.speedKmh === 'number' ? data.speedKmh : null);
+    setAutoMet(typeof data.met === 'number' ? data.met : null);
   };
 
 
@@ -343,6 +249,7 @@ export default function Steps() {
       setIsSyncing(false);
     }
   };
+
 
   const handleAddSteps = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -403,16 +310,16 @@ export default function Steps() {
     }
   };
 
-    const handleSavePremiumSession = async (session: any) => {
+    const handleSaveSession = async (session: any) => {
       try {
         const token = localStorage.getItem('token');
         await axios.post('/api/track/sessions', session, { headers: { Authorization: `Bearer ${token}` } });
-        setMessage('Premium session saved.');
+        setMessage('Live tracking session saved.');
         setTimeout(() => setMessage(''), 3000);
         fetchData();
       } catch (err: any) {
-        console.error('Failed to save premium session', err);
-        setMessage('Failed to save premium session.');
+        console.error('Failed to save tracking session', err);
+        setMessage('Failed to save tracking session.');
       }
     };
 
@@ -450,6 +357,7 @@ export default function Steps() {
             </div>
           </div>
         </div>
+
 
         {/* Offline Status & Sync */}
         <div className="mb-6 flex gap-4">
@@ -537,44 +445,9 @@ export default function Steps() {
                   }`}
                 >
                   <MapPin className="w-4 h-4 inline mr-2" />
-                  Live
-                </button>
-                <button
-                  onClick={() => setTrackingMode('live-premium')}
-                  className={`flex-1 py-2 px-3 rounded-lg font-medium transition ${
-                    trackingMode === 'live-premium'
-                      ? 'bg-gradient-to-r from-pink-500 to-pink-600 text-white shadow-lg'
-                      : 'text-white/60 hover:text-white/80'
-                  }`}
-                >
-                  <Zap className="w-4 h-4 inline mr-2" />
-                  Live Tracking (Premium)
+                  Live Tracking
                 </button>
               </div>
-
-              {/* Live Tracking Premium mode UI */}
-              {trackingMode === 'live-premium' && (
-                <div className="mb-4 w-full box-border">
-                  {user?.isPremium ? (
-                    <MapTracker
-                      onUpdate={({ distanceKm, steps, calories, speedKmh, met }) => {
-                        setAutoDistance(distanceKm);
-                        setAutoSteps(steps);
-                        setCalories(calories.toString());
-                        setAutoSpeed(typeof speedKmh === 'number' ? speedKmh : null);
-                        setAutoMet(typeof met === 'number' ? met : null);
-                        (window as any).lastSpeedKmh = speedKmh;
-                        (window as any).lastMet = met;
-                      }}
-                      onComplete={(session) => handleSavePremiumSession(session)}
-                    />
-                  ) : (
-                    <div className="p-4 rounded-lg bg-white/5 border border-white/10 text-white/70 text-sm">
-                      Map-based live tracking is available for premium users. Upgrade your account to unlock this feature.
-                    </div>
-                  )}
-                </div>
-              )}
 
               {trackingMode === 'manual' ? (
                 <form onSubmit={handleAddSteps} className="space-y-4">
@@ -643,26 +516,29 @@ export default function Steps() {
                     {loading ? 'Saving...' : 'Save Activity'}
                   </button>
                 </form>
-              ) : trackingMode === 'live' ? (
-                <div className="mb-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <span className="text-white/70 text-sm">Counting Mode:</span>
-                        <div className="inline-flex rounded-md bg-white/5 p-1">
-                          <button onClick={() => { setCountMode('perMeter'); localStorage.setItem('fithub_count_mode','perMeter'); }} className={`px-2 py-1 text-xs rounded ${countMode==='perMeter' ? 'bg-emerald-500 text-white' : 'text-white/70'}`}>1m per step</button>
-                          <button onClick={() => { setCountMode('stride'); localStorage.setItem('fithub_count_mode','stride'); }} className={`px-2 py-1 text-xs rounded ${countMode==='stride' ? 'bg-emerald-500 text-white' : 'text-white/70'}`}>Stride-based</button>
-                        </div>
-                      </div>
-                      {!user?.height || !user?.weight ? (
-                        <div className="text-xs text-yellow-300">Using default metrics (170cm / 70kg)</div>
-                      ) : (
-                        <div className="text-xs text-white/60">Using your profile metrics</div>
-                      )}
+              ) : (
+                <div className="mb-4 space-y-4">
+                  <div className="w-full box-border">
+                    <MapTracker
+                      ref={mapTrackerRef}
+                      onUpdate={handleMapUpdate}
+                      onComplete={(session) => handleSaveSession(session)}
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 mb-3 justify-center">
+                    <span className="text-white/70 text-sm">Distance Unit:</span>
+                    <div className="inline-flex rounded-md bg-white/5 p-1">
+                      <button onClick={() => handleDistanceUnitChange('km')} className={`px-2 py-1 text-xs rounded ${distanceUnit==='km' ? 'bg-emerald-500 text-white' : 'text-white/70'}`}>km</button>
+                      <button onClick={() => handleDistanceUnitChange('m')} className={`px-2 py-1 text-xs rounded ${distanceUnit==='m' ? 'bg-emerald-500 text-white' : 'text-white/70'}`}>m</button>
+                      <button onClick={() => handleDistanceUnitChange('cm')} className={`px-2 py-1 text-xs rounded ${distanceUnit==='cm' ? 'bg-emerald-500 text-white' : 'text-white/70'}`}>cm</button>
                     </div>
+                  </div>
+
                   <div className="grid grid-cols-3 gap-2 mt-4">
                     <div className="backdrop-blur-md bg-white/5 rounded-lg p-2 text-center">
                       <p className="text-white/50 text-xs" style={{fontSize:'0.7rem'}}>Distance</p>
-                      <p className="text-base md:text-lg font-bold text-white">{autoDistance.toFixed(2)} km</p>
+                      <p className="text-base md:text-lg font-bold text-white">{getDisplayDistance(autoDistance).value.toFixed(distanceUnit === 'km' ? 2 : 0)} {getDisplayDistance(autoDistance).unit}</p>
                     </div>
                     <div className="backdrop-blur-md bg-white/5 rounded-lg p-2 text-center">
                       <p className="text-white/50 text-xs" style={{fontSize:'0.7rem'}}>Steps</p>
@@ -673,30 +549,8 @@ export default function Steps() {
                       <p className="text-base md:text-lg font-bold text-white">{calories || '0'}</p>
                     </div>
                   </div>
-                  <div className="mt-4 flex justify-center">
-                    {!isTracking ? (
-                      <button
-                        type="button"
-                        onClick={startLiveTracking}
-                        className="w-full py-2 px-4 backdrop-blur-md bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 rounded-lg font-medium text-white transition flex items-center justify-center gap-2"
-                      >
-                        <Play className="w-4 h-4" />
-                        Start Live Tracking
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={stopLiveTracking}
-                        className="w-full py-2 px-4 backdrop-blur-md bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 rounded-lg font-medium text-white transition flex items-center justify-center gap-2"
-                      >
-                        <Square className="w-4 h-4" />
-                        Stop Live Tracking
-                      </button>
-                    )}
-                  </div>
-                  <div className="mt-4 text-center text-white/60 text-xs">Live tracking uses your GPS to calculate stats, but does not show a map. Upgrade to premium for map-based tracking.</div>
                 </div>
-              ) : null}
+              )}
           </div>
           </div>
 
